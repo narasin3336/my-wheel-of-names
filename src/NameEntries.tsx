@@ -1,12 +1,21 @@
 import { useState, useEffect, useRef } from "react";
 import { Box, Button, Flex } from "@chakra-ui/react";
-import { ArrowUp, ArrowDown, Shuffle, Trash, RefreshCcw } from "lucide-react";
+import {
+  ArrowUp,
+  ArrowDown,
+  Shuffle,
+  Trash,
+  RefreshCcw,
+  Upload,
+} from "lucide-react";
+import * as XLSX from "xlsx";
 
 const SortAZIcon = (props: any) => <Box as={ArrowUp} {...props} />;
 const SortZAIcon = (props: any) => <Box as={ArrowDown} {...props} />;
 const ShuffleIcon = (props: any) => <Box as={Shuffle} {...props} />;
 const DeleteIcon = (props: any) => <Box as={Trash} {...props} />;
 const RandomIcon = (props: any) => <Box as={RefreshCcw} {...props} />;
+const UploadIcon = (props: any) => <Box as={Upload} {...props} />;
 
 interface NameEntriesProps {
   names: string[];
@@ -72,6 +81,7 @@ export const NameEntries: React.FC<NameEntriesProps> = ({
   ];
 
   const [isAscending, setIsAscending] = useState<boolean>(true);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const storedNames = localStorage.getItem("wheel-names");
@@ -117,6 +127,71 @@ export const NameEntries: React.FC<NameEntriesProps> = ({
       .filter((name) => name);
     setNames(updatedNames);
     localStorage.setItem("wheel-names", JSON.stringify(updatedNames));
+  };
+
+  const normalizeImportedNames = (raw: unknown[]): string[] => {
+    const seen = new Set<string>();
+    const result: string[] = [];
+
+    for (const value of raw) {
+      const name = String(value ?? "").trim();
+      if (!name) continue;
+      if (name.toLowerCase() === "name") continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      result.push(name);
+    }
+
+    return result;
+  };
+
+  const parseCsvLikeTextToNames = (text: string): string[] => {
+    const parts = text
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .split(/[\n,;\t]+/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    return normalizeImportedNames(parts);
+  };
+
+  const parseExcelToNames = async (file: File): Promise<string[]> => {
+    const buf = await file.arrayBuffer();
+    const workbook = XLSX.read(buf, { type: "array" });
+    const firstSheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[firstSheetName];
+    if (!sheet) return [];
+
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as unknown[][];
+    const firstColumn = rows.map((r) => (Array.isArray(r) ? r[0] : ""));
+    return normalizeImportedNames(firstColumn);
+  };
+
+  const handleImportFile = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    let imported: string[] = [];
+
+    if (lowerName.endsWith(".csv")) {
+      const text = await file.text();
+      imported = parseCsvLikeTextToNames(text);
+    } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xls")) {
+      imported = await parseExcelToNames(file);
+    } else {
+      imported = parseCsvLikeTextToNames(await file.text());
+    }
+
+    if (imported.length === 0) return;
+
+    const merged = [...names];
+    const seen = new Set(merged);
+    for (const n of imported) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      merged.push(n);
+    }
+
+    updateNames(merged);
   };
 
   return (
@@ -196,6 +271,38 @@ export const NameEntries: React.FC<NameEntriesProps> = ({
               <DeleteIcon color="#888888" />
               <Box display={{ base: "none", md: "block" }} color="#333333">
                 Clear
+              </Box>
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              style={{ display: "none" }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  await handleImportFile(file);
+                } catch (err) {
+                  console.error("Import failed:", err);
+                  alert("Import failed. Please check the file format.");
+                } finally {
+                  e.target.value = "";
+                }
+              }}
+            />
+            <Button
+              bg="#EAEAEA"
+              color="#333333"
+              borderRadius="4px"
+              _hover={{ bg: "#CCCCCC" }}
+              onClick={() => fileInputRef.current?.click()}
+              display="flex"
+              alignItems="center"
+            >
+              <UploadIcon color="#888888" />
+              <Box display={{ base: "none", md: "block" }} color="#333333">
+                Import
               </Box>
             </Button>
           </Flex>
